@@ -1,6 +1,20 @@
-# <Project Title / 论文标题>
-### <Conference / Year>  
-<Author1>, <Author2>, <Author3>, ...
+# NeLiF: Neural Lighting Function Generation for Indoor Rendering
+### SIGGRAPH Asia 2025 (to appear)
+
+**Hongtao Sheng\***¹, **Yuchi Huo\***¹, **Chuankun Zheng**¹,  
+**Guangzhi Han**¹, **Shi Li**¹, **Bin Zang**¹, **Rui Wang**¹, **Hujun Bao†**¹,  
+**Yifan Peng**²,  
+**Hao Zhu**³, **Rui Tang**³, **Yiming Wu**³  
+
+\* Joint first authors  
+† Corresponding author  
+
+---
+
+### **Affiliations**
+¹ State Key Lab of CAD&CG, Zhejiang University, China  
+² The University of Hong Kong, China  
+³ Manycore Tech Inc, China  
 
 ---
 
