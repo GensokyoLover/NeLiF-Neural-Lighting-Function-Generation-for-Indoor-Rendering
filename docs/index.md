@@ -464,6 +464,8 @@
         <span class="author-sep">,</span>
         <span class="author">Chuankun Zheng<sup>1</sup></span>
         <span class="author-sep">,</span>
+        <span class="author">Yifan Peng<sup>2</sup></span>
+        <span class="author-sep">,</span>
         <span class="author">Guangzhi Han<sup>1</sup></span>
         <span class="author-sep">,</span>
         <span class="author">Shi Li<sup>1</sup></span>
@@ -472,15 +474,13 @@
         <span class="author-sep">,</span>
         <span class="author">Rui Wang<sup>1</sup></span>
         <span class="author-sep">,</span>
-        <span class="author"><span class="sym" style="color:var(--accent2)">†</span>Hujun Bao<sup>1</sup></span>
-        <span class="author-sep">,</span>
-        <span class="author">Yifan Peng<sup>2</sup></span>
-        <span class="author-sep">,</span>
         <span class="author">Hao Zhu<sup>3</sup></span>
         <span class="author-sep">,</span>
         <span class="author">Rui Tang<sup>3</sup></span>
         <span class="author-sep">,</span>
         <span class="author">Yiming Wu<sup>3</sup></span>
+        <span class="author"><span class="sym" style="color:var(--accent2)">†</span>Hujun Bao<sup>1</sup></span>
+        <span class="author-sep">,</span>
       </div>
       <div class="author-note">* Joint first authors &nbsp;&nbsp; † Corresponding author</div>
     </div>
@@ -494,25 +494,13 @@
 
     <!-- Buttons -->
     <div class="btn-row">
-      <a href="#" class="btn btn-primary">
+      <a href="https://dl.acm.org/doi/10.1145/3757377.3763958" target="_blank" class="btn btn-primary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Paper
       </a>
-      <a href="#" class="btn btn-secondary">
+      <a href="https://github.com/GensokyoLover/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering" class="btn btn-secondary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
         Code
-      </a>
-      <a href="#" class="btn btn-secondary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Supplementary
-      </a>
-      <a href="#" class="btn btn-secondary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-        Video
-      </a>
-      <a href="#" class="btn btn-secondary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-        Dataset
       </a>
     </div>
 
@@ -543,7 +531,7 @@
     <div class="sec-label">Abstract</div>
     <h2 class="sec-title">Abstract</h2>
     <div class="abstract-text">
-      Replace this text with your paper's abstract. Use 3–5 sentences to summarize the problem, your proposed neural lighting function approach, and the key contributions or results. For example: we introduce NeLiF, a neural representation that models the spatial and angular distribution of lighting from complex indoor luminaires, enabling high-quality direct illumination and shadow rendering without relying on simplified analytical light source models.
+      Recent advances in neural rendering have mainly focused on modeling radiance fields with neural representations, often overlooking the underlying mechanisms for producing various lighting effects, and consequently leading to the limited adaptability to dynamic scenes. Lighting effects, such as highlights, shadows, and indirect illuminations, are typically computed using physically-based rendering methods like path tracing, which can be computationally intensive for complex indoor luminaires. Although several recent studies have aimed to model global illumination effects with neural representations, they commonly suffer from long training times or poor generalizability to new scenes. Addressing these challenges, this work presents a novel neural lighting function generation model capable of synthesizing diverse lighting effects in real time for unseen dynamic scenes and complex indoor luminaires, achieving results comparable to state-of-the-art rendering pipelines. Our model operates in two stages. First, multi-view observation images of the luminaire are captured to encode a compact, scene-independent 3D neural lighting field. Subsequently, light information is sampled from this neural lighting field and integrated with G-buffers and shadow clues to produce the shading results. In parallel, we employ a state-of-the-art generative model together with our training-free Inverse HDR Splatting module to generate HDR 3D Gaussians representing the luminaire. This strategy capitalizes on the powerful generalization capabilities of advanced generative models, enabling efficient and accurate appearance reconstruction for a diverse range of complex luminaires. In our experiments, the model trained on a dataset of 10,000 modern indoor scenes and thousands of illuminations demonstrates strong generalizability, high efficiency, and visually convincing results across a wide range of test scenes, highlighting its potential as a practical and flexible solution for high-fidelity, real-time neural indoor rendering.
     </div>
   </div>
 </section>
