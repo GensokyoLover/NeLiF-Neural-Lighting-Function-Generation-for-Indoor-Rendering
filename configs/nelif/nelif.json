@@ -1,0 +1,94 @@
+{
+    "model": "NelifDecoder",
+    "loss_function": "Loss",
+    "tot_epoch": 100000,
+    "datasets_type":"NelifDatasets",
+    "datasets_dir": "../datasets2/",
+    "seed": 0,
+    "batch_size": 1,
+    "Dataset": {
+    },
+    "loss_configs": {
+        "losses": {
+            
+        }
+    },
+   "saver_configs": {
+        "resize": null,
+        "max_num_per_page": 100,
+        "save_during_training": {
+            "enable": true,
+            "num": 5
+        },
+        "save_features": {
+            "mask":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "feature_visualize":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "feature_visualize_oct":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "hard_shadow":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "lightformer_input0":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "scene_sample_uvw":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "gbuffer_volume_position":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "gbuffer_lposition":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "gbuffer_normal":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            },
+            "voxel_coord":{
+                "visualize_loss": [null],
+                "outputs": {
+                    "exr": []
+                }
+            }
+     
+            
+        }
+    },
+    "model_configs": {
+        "sampling":"normal",
+        "plane":{
+            "decoder_direct_dim": 64
+        }
+    }
+}
