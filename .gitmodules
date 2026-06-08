@@ -1,0 +1,5 @@
+[submodule "scenes"]
+	path   = scenes
+	url    = ../scene_assets.git
+	branch = master
+

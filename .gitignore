@@ -1,0 +1,26 @@
+.vscode/
+/*.patch
+
+/datasets/
+# /ext/
+/runs/
+/tmp/
+/models/
+/ckpts/
+/final_models/
+/backup/
+/train_configs/
+
+__pycache__/
+
+/src/imgui.ini
+
+/observations/
+
+/*results/
+/outputs/
+
+test*.py
+!test.py
+/src/gen_room
+/src/ext/Optix
