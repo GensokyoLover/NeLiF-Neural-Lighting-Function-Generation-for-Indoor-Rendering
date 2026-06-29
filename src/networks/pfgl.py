@@ -1366,8 +1366,7 @@ def xyz_to_uvd_pixel_center(position,plane_res=32):
     #   = (ln(R) - ln(0.1)) / ln(1.14) + 0.5
     d_val = (torch.log(radius_safe) - ln_r0) / ln_growth + 0.5
     
-    # ================= UV 计算 (保持不变) =================
-    # 归一化方向向量
+
     unit_vec = position / radius_safe
     x = unit_vec[..., 0]
     y = unit_vec[..., 1]
