@@ -21,8 +21,7 @@ def splat(img, kernel, size):
 def conv_splat(img, kernel, size):
     h = img.shape[2]
     w = img.shape[3]
-    # print("image",img.shape)
-    # print("size",size)
+
     total = torch.zeros_like(img)
 
     img = F.pad(img, [(size - 1) // 2] * 4)
@@ -57,43 +56,113 @@ def upscale(img, kernel):
     return tl[:, :, 3:-1, 3:-1] + tr[:, :, 3:-1, 1:-3] + bl[:, :, 1:-3, 3:-1] + br[:, :, 1:-3, 1:-3]
 
 
+
+
+
 class PartitioningPyramid():
     def __init__(self, K=5):
         self.K = K
         self.inputs = [25 + K + 1] + [41 for i in range(K - 1)]
-        self.t_lambda_index = 51
+
         self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
         self.final_activate = nn.LeakyReLU(0.3)
+        self.relu = nn.ReLU(inplace=False)
 
     def __call__(self, weights, shadow):
-        part_weights = F.softmax(weights[0][:, 25:30], 1)
-        # starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        # starter.record()
+
+
+        part_weights = F.softmax(
+            weights[0][:, 25:25 + self.K],
+            dim=1
+        )
+
+        # [B, K, C, H, W]
         partitions = part_weights[:, :, None] * shadow[:, None]
 
-        denoised_levels = [
-            conv_splat(
-                F.avg_pool2d(partitions[:, i], 2 ** i, 2 ** i),
-                F.softmax(weights[i][:, 0:25], 1),
-                5
+
+        # level 0 : H
+        # level 1 : H/2
+        # level 2 : H/4
+        # level 3 : H/8
+        # level 4 : H/16
+        # --------------------------------------------------
+        pyramid = [
+            F.avg_pool2d(
+                partitions[:, i],
+                kernel_size=2 ** i,
+                stride=2 ** i
             )
             for i in range(self.K)
         ]
-        denoised = denoised_levels[-1]
-        denoised_shadow_list = []
-        for i in range(5):
-            dd = denoised_levels[i]
-            for j in reversed(range(i)):
-                dd =  upscale(dd, F.softmax(weights[j+1][:, 25:41], 1) * 4)
-            denoised_shadow_list.append(dd)
+
+        # Level 4:
+        # raw shadow -> filter
+        # --------------------------------------------------
+        i = self.K - 1
+
+        filter_kernel = F.softmax(
+            weights[i][:, 0:25],
+            dim=1
+        )
+
+        denoised = conv_splat(
+            pyramid[i],
+            filter_kernel,
+            5
+        )
+
+        # --------------------------------------------------
+        # 4. Progressive reconstruction
+        #
+        # Filter
+        #   ↓
+        # Upsample
+        #   ↓
+        # + current level shadow
+        #   ↓
+        # Filter
+        #   ↓
+        # Upsample
+        # ...
+        # --------------------------------------------------
         for i in reversed(range(self.K - 1)):
-            denoised = denoised_levels[i] + upscale(denoised, F.softmax(weights[i + 1][:, 25:41], 1) * 4)
+
+            up_kernel = (
+                F.softmax(
+                    weights[i + 1][:, 25:41],
+                    dim=1
+                )
+                * 4.0
+            )
+
+            denoised = upscale(
+                denoised,
+                up_kernel
+            )
+            denoised = denoised + pyramid[i]
+
+            filter_kernel = F.softmax(
+                weights[i][:, 0:25],
+                dim=1
+            )
+
+            denoised = conv_splat(
+                denoised,
+                filter_kernel,
+                5
+            )
+
+        # --------------------------------------------------
+        # 5. final modulation
+        # --------------------------------------------------
         three_weight = weights[0][:, -1, ...].unsqueeze(dim=1)
-        #denoised = denoised * (1 - self.final_activate(three_weight))
-        #denoised = denoised * (1 - self.final_activate(three_weight))
-        for i in range(len(denoised_shadow_list)):
-            denoised_shadow_list[i] = denoised_shadow_list[i] * (self.final_activate(three_weight) + 1)
-        return denoised,denoised_shadow_list
+
+        denoised = (
+            denoised
+            * self.final_activate(three_weight)
+        )
+
+        return denoised
 
 class TemporalPartitioningPyramid():
     def __init__(self, K = 5):

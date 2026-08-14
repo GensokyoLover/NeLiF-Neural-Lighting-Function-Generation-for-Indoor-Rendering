@@ -1366,7 +1366,8 @@ def xyz_to_uvd_pixel_center(position,plane_res=32):
     #   = (ln(R) - ln(0.1)) / ln(1.14) + 0.5
     d_val = (torch.log(radius_safe) - ln_r0) / ln_growth + 0.5
     
-
+    # ================= UV 计算 (保持不变) =================
+    # 归一化方向向量
     unit_vec = position / radius_safe
     x = unit_vec[..., 0]
     y = unit_vec[..., 1]
@@ -1845,7 +1846,7 @@ class NelifDecoder(nn.Module):
         localData = data["local"]
         data["local"]["shadow_light_repr"] = self.direct_compress_layer(data["local"]["direct_light_reprs"])
         data["local"]["shadow_input"] = get_lightformer_input(data["local"]["lights"], data["local"],True).to(data["local"]["shadow_light_repr"].dtype)
-        shadow_result, weights, shadow_list,shadow_loss = self.shadow_network.step(data)
+        shadow_result = self.shadow_network.step(data)
 
         shadow_result = 1 - shadow_result
         if torch.any(torch.isnan(shadow_result)):
@@ -1855,11 +1856,8 @@ class NelifDecoder(nn.Module):
             data["local"]["mask"] | data["local"]["shadow_mask"],
             localData["shadow"],
             shadow_result)
-        print("shadow_result",shadow_result.shape)
-        for i in range(5):
-            data["local"]["single_shadow_{}".format(i)] = shadow_list[i].permute(0,2,3,1)
-        data["local"]["single_shadow_5"] = weights[...,-1:]
-        return shadow_result,shadow_loss
+ 
+        return shadow_result
     
 
     def forward(self, data, need_diffuse, need_specular, need_shadow, need_indirect):
@@ -1872,7 +1870,7 @@ class NelifDecoder(nn.Module):
         gt_plane = data["global"]["plane"]
         B = gt_plane.shape[0]
         gt_plane = gt_plane.reshape(B*3,*gt_plane.shape[2:])
-        #sampled_plane = self.forward_light(data,gt_plane)
+        #sampled_plane = self.forward_light(data)
         sampled_plane = gt_plane
 
         B = data["global"]["plane"].shape[0]
@@ -1956,7 +1954,7 @@ class NelifDecoder(nn.Module):
             result["log1p_specular_direct_shading"] = pred_specular
             #print("log1p_specular_indirect_shading",result["log1p_specular_indirect_shading"].shape)
         if need_shadow:
-            result["shadow"], shadow_loss = self.forward_shadow(
+            result["shadow"] = self.forward_shadow(
                 data, result, light_feature, light_space_gbuffer
             )
 
