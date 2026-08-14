@@ -623,19 +623,57 @@ class NelifShadowNetwork(nn.Module):
         prev_color = color
 
     def step(self, data):
-        
-        x = torch.cat([data["local"]["shadow_light_repr"],data["local"]["shadow_input"][...].repeat(3,1,1,1)], dim=-1).permute(0,3,1,2)
-        shadow =data["local"]["hard_shadow"].permute(0,3,1,2).repeat(3,1,1,1)
+    
+        B = data["local"]["shadow_input"].shape[0]
+
+        shadow_input = data["local"]["shadow_input"].repeat_interleave(
+            3,
+            dim=0,
+        )
+
+        x = torch.cat(
+            [
+                data["local"]["shadow_light_repr"],
+                shadow_input,
+            ],
+            dim=-1,
+        ).permute(0, 3, 1, 2)
+
+  
+        shadow = (
+            data["local"]["hard_shadow"]
+            .permute(0, 3, 1, 2)
+            .repeat_interleave(3, dim=0)
+        )
+
         weights = self.weight_predictor(x)
 
-        output,shadow_list = self.filter(weights, shadow)
+        output = self.filter(weights, shadow)
 
-        three_weight = weights[0][:, -1, ...].unsqueeze(dim=1)
-        part_weights = F.softmax(weights[0][:, 25:30], 1)
-        light_weights = self.final_activate(three_weight)
-        final_weights = torch.cat([part_weights, light_weights], dim=1).permute(0, 2, 3, 1)
-        return output.permute(1, 2, 3, 0), final_weights,shadow_list,0
-    
+        B3, _, H, W = output.shape
+
+        assert B3 == B * 3
+
+        output = output.permute(0, 2, 3, 1)
+        # (B*3,H,W,1)
+
+        output = output.reshape(
+            B,
+            3,
+            H,
+            W,
+            1,
+        )
+
+        output = (
+            output.permute(0, 2, 3, 1, 4)
+            .contiguous()
+            .reshape(B, H, W, 3)
+        )
+
+
+        return output       
+
     def forward(self,input):
         x = input.permute(0,3,1,2)
         shadow =x[:,-1:,...]

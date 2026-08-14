@@ -4,7 +4,7 @@ import json
 import random
 import argparse
 from datetime import datetime
-
+import csv
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -422,15 +422,105 @@ def build_old_style_ckpt_path(args, configs):
 # Test loop
 # ============================================================
 
+def parse_scene_light_from_name(val_name):
+    """
+    val_name from DataLoader with batch_size=1 is usually a list/tuple like [localID].
+    localID format is assumed to be:
+        sceneID_lightID_xxx_xxx_xxx
+    Your old code used:
+        scene, light = val_name[0].split("_")[:2]
+        scene = scene[:-7]
+    so I keep the same scene grouping rule here.
+    """
+    if isinstance(val_name, (list, tuple)):
+        name = val_name[0]
+    else:
+        name = val_name
+
+    if isinstance(name, (list, tuple)):
+        name = name[0]
+
+    name = str(name)
+    stem = osp.splitext(osp.basename(name))[0]
+    parts = stem.split("_")
+
+    if len(parts) >= 2:
+        scene_raw = parts[0]
+        light = parts[1]
+    else:
+        scene_raw = stem
+        light = "unknown_light"
+
+    # Keep your original rule: scene = scene[:-7]
+    # This is useful if the last 7 chars encode view/config and should be grouped together.
+    scene = scene_raw[:-7] if len(scene_raw) > 7 else scene_raw
+
+    return scene, light, stem
+
+
+def add_psnr_metric(metric_table, group_key, shading_key, value):
+    """
+    metric_table[group_key][shading_key] = [sum_psnr, count]
+    """
+    if group_key not in metric_table:
+        metric_table[group_key] = {}
+    if shading_key not in metric_table[group_key]:
+        metric_table[group_key][shading_key] = [0.0, 0]
+
+    metric_table[group_key][shading_key][0] += float(value)
+    metric_table[group_key][shading_key][1] += 1
+
+
+def write_metric_csv(path, metric_table, group_columns):
+    """
+    Long-format CSV:
+        group columns + shading_key + psnr + count
+    """
+    os.makedirs(osp.dirname(path), exist_ok=True)
+
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(group_columns + ["shading_key", "psnr", "count"])
+
+        for group_key in sorted(metric_table.keys(), key=lambda x: str(x)):
+            if not isinstance(group_key, tuple):
+                group_key = (group_key,)
+
+            for shading_key in sorted(metric_table[group_key].keys()):
+                psnr_sum, cnt = metric_table[group_key][shading_key]
+                if cnt <= 0:
+                    continue
+                writer.writerow(list(group_key) + [shading_key, psnr_sum / cnt, cnt])
+
+
 def run_test(model, validation_loader, args, device, data_type, test_saver=None, outdir=None):
     model.eval()
-    metric_map = {}
+
+    # Overall / grouped metrics
+    overall_metrics = {}
+    scene_metrics = {}
+    light_metrics = {}
+    scene_light_metrics = {}
+
+    # Per-sample long table
+    sample_rows = []
+
+    shading_keys = [
+        "diffuse_direct_shading",
+        "specular_direct_shading",
+        "direct_shadow_shading",
+        "diffuse_indirect_shading",
+        "specular_indirect_shading",
+        "indirect_shading",
+        "shading",
+    ]
 
     with torch.no_grad():
         pbar = tqdm(validation_loader, desc="Test")
-        for sample_idx, (val_data, val_name) in enumerate(pbar):
 
-            print(val_name)
+        for sample_idx, (val_data, val_name) in enumerate(pbar):
+            scene, light, sample_name = parse_scene_light_from_name(val_name)
+
             val_data = to_cuda_type(val_data, data_type, device)
             val_data = video_process_tensor_torch(
                 val_data,
@@ -438,7 +528,6 @@ def run_test(model, validation_loader, args, device, data_type, test_saver=None,
             )
             val_data["local"] = recognization(val_data["local"])
 
-      
             val_frame_data, val_frame_preds, val_loss_map, _ = model(
                 val_data,
                 args.diffuse,
@@ -457,31 +546,69 @@ def run_test(model, validation_loader, args, device, data_type, test_saver=None,
                 True
             )
 
-            for shading_key in [
-                "diffuse_direct_shading",
-                "specular_direct_shading",
-                "direct_shadow_shading",
-                "diffuse_indirect_shading",
-                "specular_indirect_shading",
-                "indirect_shading",
-                "shading",
-            ]:
+            for shading_key in shading_keys:
                 if shading_key not in val_frame_preds:
                     continue
-
-                metric_map.setdefault(shading_key + "_psnr", 0.0)
-                metric_map.setdefault(shading_key + "_cnt", 0.0)
+                if shading_key not in val_frame_data["local"]:
+                    continue
 
                 psnr_tensor = calculate_psnr_ldr_torch(
                     val_frame_data["local"][shading_key].detach(),
                     val_frame_preds[shading_key].detach(),
                 )
-                psnr_value = psnr_tensor.mean()
-                if not torch.isinf(psnr_value) and not torch.isnan(psnr_value):
-                    metric_map[shading_key + "_psnr"] += psnr_value.item()
-                    metric_map[shading_key + "_cnt"] += 1.0
 
-            print(val_name)
+                psnr_value = psnr_tensor.mean()
+
+                if torch.isinf(psnr_value) or torch.isnan(psnr_value):
+                    continue
+
+                psnr_value = psnr_value.item()
+
+                # 1. overall
+                add_psnr_metric(
+                    overall_metrics,
+                    ("all",),
+                    shading_key,
+                    psnr_value,
+                )
+
+                # 2. by scene
+                add_psnr_metric(
+                    scene_metrics,
+                    (scene,),
+                    shading_key,
+                    psnr_value,
+                )
+
+                # 3. by light
+                add_psnr_metric(
+                    light_metrics,
+                    (light,),
+                    shading_key,
+                    psnr_value,
+                )
+
+                # 4. by scene + light
+                add_psnr_metric(
+                    scene_light_metrics,
+                    (scene, light),
+                    shading_key,
+                    psnr_value,
+                )
+
+                # 5. per sample
+                sample_rows.append({
+                    "sample_idx": sample_idx,
+                    "sample_name": sample_name,
+                    "scene": scene,
+                    "light": light,
+                    "shading_key": shading_key,
+                    "psnr": psnr_value,
+                })
+
+            pbar.set_postfix(scene=scene, light=light)
+
+            # If you want to save images/exr, uncomment this block.
             # if (not args.no_save) and test_saver is not None and outdir is not None:
             #     test_saver.save(
             #         val_frame_preds,
@@ -494,25 +621,79 @@ def run_test(model, validation_loader, args, device, data_type, test_saver=None,
             #     )
 
     if (not args.no_save) and test_saver is not None and outdir is not None:
-        # Some Saver implementations buffer pages before writing final html/png pages.
         if hasattr(test_saver, "output_pages"):
             test_saver.output_pages(osp.join(outdir, "test"))
 
-    print("\n--- Test Results ---")
+    # Save CSV files
+    metric_dir = osp.join(outdir, "metrics")
+    os.makedirs(metric_dir, exist_ok=True)
+
+    write_metric_csv(
+        osp.join(metric_dir, "psnr_overall.csv"),
+        overall_metrics,
+        ["group"],
+    )
+
+    write_metric_csv(
+        osp.join(metric_dir, "psnr_by_scene.csv"),
+        scene_metrics,
+        ["scene"],
+    )
+
+    write_metric_csv(
+        osp.join(metric_dir, "psnr_by_light.csv"),
+        light_metrics,
+        ["light"],
+    )
+
+    write_metric_csv(
+        osp.join(metric_dir, "psnr_by_scene_light.csv"),
+        scene_light_metrics,
+        ["scene", "light"],
+    )
+
+    sample_csv_path = osp.join(metric_dir, "psnr_per_sample.csv")
+    with open(sample_csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "sample_idx",
+                "sample_name",
+                "scene",
+                "light",
+                "shading_key",
+                "psnr",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(sample_rows)
+
+    print("\n--- Test Results: Overall PSNR ---")
     results = {}
-    for psnr_key in sorted(metric_map.keys()):
-        if psnr_key.endswith("_cnt"):
-            continue
-        shading_key = psnr_key[:-5]
-        total = metric_map[shading_key + "_psnr"]
-        cnt = metric_map[shading_key + "_cnt"]
-        if cnt > 0:
-            avg = total / cnt
+
+    for group_key in sorted(overall_metrics.keys(), key=lambda x: str(x)):
+        for shading_key in sorted(overall_metrics[group_key].keys()):
+            psnr_sum, cnt = overall_metrics[group_key][shading_key]
+            if cnt <= 0:
+                continue
+            avg = psnr_sum / cnt
             results[shading_key] = avg
-            print(f" * {shading_key}: {avg:.4f} dB")
+            print(f" * {shading_key}: {avg:.4f} dB, count={cnt}")
 
-    return results
+    print("\n--- Saved PSNR CSV files ---")
+    print(f" * {osp.join(metric_dir, 'psnr_overall.csv')}")
+    print(f" * {osp.join(metric_dir, 'psnr_by_scene.csv')}")
+    print(f" * {osp.join(metric_dir, 'psnr_by_light.csv')}")
+    print(f" * {osp.join(metric_dir, 'psnr_by_scene_light.csv')}")
+    print(f" * {osp.join(metric_dir, 'psnr_per_sample.csv')}")
 
+    return {
+        "overall": overall_metrics,
+        "by_scene": scene_metrics,
+        "by_light": light_metrics,
+        "by_scene_light": scene_light_metrics,
+        "per_sample": sample_rows,
+    }
 
 # ============================================================
 # Main
