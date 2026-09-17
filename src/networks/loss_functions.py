@@ -298,8 +298,7 @@ class AllMetrics(torch.nn.Module):
         # LDR metrics
         self.metrics['psnr_ldr'] = 0
         self.metrics['ssim_ldr'] = 0
-
-        self.lpips_network = lpips.LPIPS().to('cuda')
+       
 
     def reset(self):
         self.metrics['l1'] = 0

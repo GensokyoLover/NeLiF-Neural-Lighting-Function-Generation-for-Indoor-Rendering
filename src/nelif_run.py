@@ -4,22 +4,23 @@ import json
 import random
 import argparse
 from datetime import datetime
-import csv
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from networks import *
 from networks.loss_functions import calculate_psnr_ldr_torch
 from networks.saver import Saver
-from networks.pfgl import *
-from utils.data_utils import to_cuda, get_frame_data, preprocess_channel_cut
-from dataset import *
-import os
-import shutil
-from collections import defaultdict
+from networks.pfgl import NelifDecoder
+import dataset as dataset_module
+from dataset import video_process_tensor_torch, recognization, inverse_data_process_tensor
 TIMESTAMP = "{0:%Y-%m-%dT%H-%M-%S/}".format(datetime.now())
+SCRIPT_DIR = osp.dirname(osp.abspath(__file__))
+PROJECT_ROOT = osp.dirname(SCRIPT_DIR)
+DEFAULT_CONFIG = osp.join(PROJECT_ROOT, "configs", "nelif", "nelif.json")
+DEFAULT_CHECKPOINT = osp.join(PROJECT_ROOT, "ckpts_nelif", "nelif_decoder", "model.pt")
+DEFAULT_OUTPUT = osp.join(PROJECT_ROOT, "outputs", "nelif_test")
 
 
 # ============================================================
@@ -41,13 +42,13 @@ def str2checkpoint(v):
 
 def add_argument():
     parser = argparse.ArgumentParser(
-        description="Pure PyTorch test-only script. It loads DeepSpeed-trained model weights and runs validation/testing."
+        description="Windows/single-GPU PyTorch test-only version of train_plane_video.py."
     )
 
     # Required / common
-    parser.add_argument("--config", type=str, required=True, help="Path to json config file")
-    parser.add_argument("--test_data", type=str, required=True, help="Validation/test dataset name")
-    parser.add_argument("--ckpt_path", type=str, default="", help="Direct path or directory of DeepSpeed/PyTorch checkpoint")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG, help="Path to json config file")
+    parser.add_argument("--test_data", type=str, default="SigaLightMove", help="Validation/test dataset name")
+    parser.add_argument("--ckpt_path", type=str, default=None, help="PyTorch/DeepSpeed checkpoint; defaults to the merged model.pt")
 
     # Old checkpoint style compatibility:
     # ../ckpts_nelif/{ckpt_name}/{checkpoint_folder}/newest/{epoch_or_newest}/mp_rank_00_model_states.pt
@@ -59,30 +60,51 @@ def add_argument():
     parser.add_argument("--label", default="", type=str)
     parser.add_argument("--job_name", type=str, default="test")
     parser.add_argument("--save_path", type=str, default="..")
-    parser.add_argument("--output_dir", type=str, default="", help="If set, save test outputs here directly")
+    parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT, help="Directory for test outputs")
     parser.add_argument("--no_save", default=False, action="store_true", help="Only compute metrics, do not save images/exr")
 
     # Task flags, keep same as old script
-    parser.add_argument("--diffuse", default=False, action="store_true")
-    parser.add_argument("--specular", default=False, action="store_true")
-    parser.add_argument("--shadow", default=False, action="store_true")
-    parser.add_argument("--indirect", default=False, action="store_true")
+    parser.add_argument("--diffuse", default=True, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--specular", default=True, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--shadow", default=True, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--indirect", default=True, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--indirect_direct", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--relative", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--voxel", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--tri", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--cache", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--cut", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--read_light", default=True, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--datasets_config", default="good_configs", type=str)
 
-    parser.add_argument("--plane_label", type=str, default="none")
-    parser.add_argument("--light", default="MidLight", type=str)
-    parser.add_argument("--light_angular_resolution", default=1, type=int)
-    parser.add_argument("--light_direction_resolution", default=1, type=int)
+    parser.add_argument("--plane_label", type=str, default="none", help="Optional GT plane dataset; inference generates its own planes")
+    parser.add_argument("--plane_resolution", type=int, choices=[4, 16, 32, 64, 128], default=None,
+                        help="Resize query and position embedding after loading; by default keep the checkpoint resolution")
+    parser.add_argument("--light", default="TogLightAll", type=str)
+    parser.add_argument("--light_angular_resolution", default=8, type=int)
+    parser.add_argument("--light_direction_resolution", default=128, type=int)
 
     # Runtime
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--num_workers", default=4, type=int)
+    parser.add_argument("--num_workers", default=0, type=int, help="0 is safest on Windows")
     parser.add_argument("--pin_memory", default=True, action=argparse.BooleanOptionalAction)
     parser.add_argument("--persistent_workers", default=True, action=argparse.BooleanOptionalAction)
     parser.add_argument("--prefetch_factor", default=4, type=int)
-    parser.add_argument("--strict", default=False, action="store_true", help="Use strict=True when loading weights")
+    parser.add_argument("--strict", default=True, action=argparse.BooleanOptionalAction,
+                        help="Require all current model parameters; known removed legacy modules are reported and excluded")
 
     args = parser.parse_args()
     args.checkpoint = str2checkpoint(args.checkpoint)
+    if args.voxel or args.indirect_direct:
+        parser.error("NelifDecoder supports diffuse/specular/shadow/indirect; --voxel and --indirect_direct are not supported")
+    if not any((args.diffuse, args.specular, args.shadow, args.indirect)):
+        parser.error("Enable at least one rendering branch")
+    if not args.read_light:
+        parser.error("NelifDecoder.image_encoder requires --read_light")
+    if (args.light_angular_resolution, args.light_direction_resolution) != (8, 128):
+        parser.error("The current NelifDecoder.image_encoder requires an 8x128 light field")
+    if args.ckpt_path is None and args.checkpoint is False:
+        args.ckpt_path = DEFAULT_CHECKPOINT
     return args
 
 
@@ -169,6 +191,8 @@ def make_test_saver_config():
 
 def generate_config_by_args(configs, args):
     configs = ensure_config_fields(configs)
+    # Rebuild losses for the enabled outputs rather than keeping training-only losses.
+    configs["loss_configs"]["losses"] = {}
     test_config = make_test_saver_config()
 
     configs["label"] = (args.label or "") + (args.test_data or "")
@@ -177,12 +201,19 @@ def generate_config_by_args(configs, args):
     # Keep old script's Dataset overrides.
     configs["Dataset"]["light_angular_resolution"] = args.light_angular_resolution
     configs["Dataset"]["light_direction_resolution"] = args.light_direction_resolution
-    configs["Dataset"]["indirect"] = args.indirect 
+    configs["Dataset"]["indirect"] = args.indirect or args.indirect_direct
     configs["Dataset"]["diffuse"] = args.diffuse
     configs["Dataset"]["specular"] = args.specular
     configs["Dataset"]["shadow"] = args.shadow
     configs["Dataset"]["light"] = args.light
     configs["Dataset"]["plane_label"] = args.plane_label
+    configs["Dataset"]["voxel"] = args.voxel
+    configs["Dataset"]["load_tri"] = args.tri
+    configs["Dataset"]["cache"] = args.cache
+    configs["Dataset"]["cut"] = args.cut
+  
+    configs["Dataset"]["read_light"] = args.read_light
+    configs["Dataset"]["datasets_config"] = args.datasets_config
 
 
     configs["model_configs"]["light_angular_resolution"] = args.light_angular_resolution
@@ -242,8 +273,15 @@ def generate_config_by_args(configs, args):
             "indirect_shading",
         ]:
             add_save_tem(configs, k)
-        for k in ["mask", "shading", "pred_shading", "pred_indirect_shading", "indirect_shading"]:
+        for k in ["mask", "pred_indirect_shading", "indirect_shading"]:
             add_save_tem(test_config, k)
+
+    if args.diffuse and args.specular and args.shadow:
+        for k in ["direct_shadow_shading", "pred_direct_shadow_shading"]:
+            add_save_tem(test_config, k)
+        if args.indirect:
+            for k in ["shading", "pred_shading"]:
+                add_save_tem(test_config, k)
 
 
     return configs, test_config
@@ -255,15 +293,14 @@ def generate_config_by_args(configs, args):
 
 def make_model(configs, args):
     model_name = configs["model"]
-    if model_name not in globals():
-        raise KeyError(f"Model class '{model_name}' was not imported. Check networks import.")
-    ModelCls = globals()[model_name]
-    return ModelCls(
+    if model_name != "NelifDecoder":
+        raise ValueError(f"nelif_run supports NelifDecoder, got {model_name!r}")
+    return NelifDecoder(
         configs["model_configs"],
         configs["loss_configs"],
-        bool(args.diffuse),
-        bool(args.indirect),
-        bool(args.shadow),
+        need_direct=bool(args.diffuse or args.specular),
+        need_indirect=bool(args.indirect),
+        need_shadow=bool(args.shadow),
     )
 
 
@@ -380,9 +417,27 @@ def load_checkpoint_into_model(model, ckpt_path, strict=False):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     print(f"Loading checkpoint: {ckpt_path}")
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     state_dict = extract_model_state_dict(checkpoint)
     state_dict = strip_prefix_candidates(state_dict, model)
+
+    current_keys = set(model.state_dict())
+    removed_keys = []
+    for key in state_dict:
+        if key in current_keys:
+            continue
+        legacy_adaln = (
+            key.startswith("image_encoder.layers.encoder_layer_")
+            and ".adaLN_modulation." in key
+        )
+        if legacy_adaln or key.startswith(("upsampler.", "adaptor.", "trioutputlayer.")):
+            removed_keys.append(key)
+    if removed_keys:
+        print(f"Excluding {len(removed_keys)} weights from modules removed in the current pfgl.NelifDecoder:")
+        for key in removed_keys:
+            print(f"  {key}")
+        removed_keys = set(removed_keys)
+        state_dict = {k: v for k, v in state_dict.items() if k not in removed_keys}
 
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
     print(f"Loaded model weights. Missing: {len(missing)}, Unexpected: {len(unexpected)}")
@@ -391,6 +446,22 @@ def load_checkpoint_into_model(model, ckpt_path, strict=False):
     if unexpected:
         print("Unexpected keys sample:", unexpected[:20])
     return ckpt_path
+
+
+def configure_plane_resolution(model, resolution=None):
+    if resolution is not None:
+        model.set_plane_resolution(resolution)
+    query_resolution = model.image_to_plane.output_resolution
+    position_shape = tuple(model.plane_pos_embedding.shape[-2:])
+    if position_shape != (query_resolution, query_resolution):
+        raise ValueError(
+            f"Checkpoint query resolution {query_resolution} and position embedding {position_shape} differ. "
+            "Use --plane_resolution to explicitly resize both."
+        )
+    if query_resolution not in (4, 16, 32, 64, 128):
+        raise ValueError(f"Unsupported sampling resolution: {query_resolution}")
+    model.plane_res = query_resolution
+    print(f"Triplane resolution: {query_resolution}x{query_resolution}")
 
 
 def build_old_style_ckpt_path(args, configs):
@@ -422,118 +493,33 @@ def build_old_style_ckpt_path(args, configs):
 # Test loop
 # ============================================================
 
-def parse_scene_light_from_name(val_name):
-    """
-    val_name from DataLoader with batch_size=1 is usually a list/tuple like [localID].
-    localID format is assumed to be:
-        sceneID_lightID_xxx_xxx_xxx
-    Your old code used:
-        scene, light = val_name[0].split("_")[:2]
-        scene = scene[:-7]
-    so I keep the same scene grouping rule here.
-    """
-    if isinstance(val_name, (list, tuple)):
-        name = val_name[0]
-    else:
-        name = val_name
-
-    if isinstance(name, (list, tuple)):
-        name = name[0]
-
-    name = str(name)
-    stem = osp.splitext(osp.basename(name))[0]
-    parts = stem.split("_")
-
-    if len(parts) >= 2:
-        scene_raw = parts[0]
-        light = parts[1]
-    else:
-        scene_raw = stem
-        light = "unknown_light"
-
-    # Keep your original rule: scene = scene[:-7]
-    # This is useful if the last 7 chars encode view/config and should be grouped together.
-    scene = scene_raw[:-7] if len(scene_raw) > 7 else scene_raw
-
-    return scene, light, stem
-
-
-def add_psnr_metric(metric_table, group_key, shading_key, value):
-    """
-    metric_table[group_key][shading_key] = [sum_psnr, count]
-    """
-    if group_key not in metric_table:
-        metric_table[group_key] = {}
-    if shading_key not in metric_table[group_key]:
-        metric_table[group_key][shading_key] = [0.0, 0]
-
-    metric_table[group_key][shading_key][0] += float(value)
-    metric_table[group_key][shading_key][1] += 1
-
-
-def write_metric_csv(path, metric_table, group_columns):
-    """
-    Long-format CSV:
-        group columns + shading_key + psnr + count
-    """
-    os.makedirs(osp.dirname(path), exist_ok=True)
-
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(group_columns + ["shading_key", "psnr", "count"])
-
-        for group_key in sorted(metric_table.keys(), key=lambda x: str(x)):
-            if not isinstance(group_key, tuple):
-                group_key = (group_key,)
-
-            for shading_key in sorted(metric_table[group_key].keys()):
-                psnr_sum, cnt = metric_table[group_key][shading_key]
-                if cnt <= 0:
-                    continue
-                writer.writerow(list(group_key) + [shading_key, psnr_sum / cnt, cnt])
-
-
 def run_test(model, validation_loader, args, device, data_type, test_saver=None, outdir=None):
     model.eval()
-
-    # Overall / grouped metrics
-    overall_metrics = {}
-    scene_metrics = {}
-    light_metrics = {}
-    scene_light_metrics = {}
-
-    # Per-sample long table
-    sample_rows = []
-
-    shading_keys = [
-        "diffuse_direct_shading",
-        "specular_direct_shading",
-        "direct_shadow_shading",
-        "diffuse_indirect_shading",
-        "specular_indirect_shading",
-        "indirect_shading",
-        "shading",
-    ]
+    metric_map = {}
 
     with torch.no_grad():
         pbar = tqdm(validation_loader, desc="Test")
-
         for sample_idx, (val_data, val_name) in enumerate(pbar):
-            scene, light, sample_name = parse_scene_light_from_name(val_name)
 
+            print(val_name)
             val_data = to_cuda_type(val_data, data_type, device)
             val_data = video_process_tensor_torch(
                 val_data,
-                args.indirect
+                args.indirect or args.indirect_direct,
+                args.relative,
+                args.voxel,
             )
             val_data["local"] = recognization(val_data["local"])
 
+
             val_frame_data, val_frame_preds, val_loss_map, _ = model(
                 val_data,
-                args.diffuse,
-                args.specular,
-                args.shadow,
-                args.indirect
+                need_diffuse=args.diffuse,
+                need_specular=args.specular,
+                need_shadow=args.shadow,
+                need_indirect=args.indirect,
+                need_volume=False,
+                channel_cnt=1 if model.channel_cut else 3,
             )
 
             inverse_data_process_tensor(
@@ -543,157 +529,66 @@ def run_test(model, validation_loader, args, device, data_type, test_saver=None,
                 args.specular,
                 args.shadow,
                 args.indirect,
-                True
+                args.indirect_direct,
+                model.channel_cut,
+                args.relative,
             )
 
-            for shading_key in shading_keys:
+            for shading_key in [
+                "diffuse_direct_shading",
+                "specular_direct_shading",
+                "direct_shadow_shading",
+                "diffuse_indirect_shading",
+                "specular_indirect_shading",
+                "indirect_shading",
+                "shading",
+            ]:
                 if shading_key not in val_frame_preds:
                     continue
-                if shading_key not in val_frame_data["local"]:
-                    continue
+
+                metric_map.setdefault(shading_key + "_psnr", 0.0)
+                metric_map.setdefault(shading_key + "_cnt", 0.0)
 
                 psnr_tensor = calculate_psnr_ldr_torch(
                     val_frame_data["local"][shading_key].detach(),
                     val_frame_preds[shading_key].detach(),
                 )
-
                 psnr_value = psnr_tensor.mean()
+                if not torch.isinf(psnr_value) and not torch.isnan(psnr_value):
+                    metric_map[shading_key + "_psnr"] += psnr_value.item()
+                    metric_map[shading_key + "_cnt"] += 1.0
 
-                if torch.isinf(psnr_value) or torch.isnan(psnr_value):
-                    continue
-
-                psnr_value = psnr_value.item()
-
-                # 1. overall
-                add_psnr_metric(
-                    overall_metrics,
-                    ("all",),
-                    shading_key,
-                    psnr_value,
+            if (not args.no_save) and test_saver is not None and outdir is not None:
+                test_saver.save(
+                    val_frame_preds,
+                    val_frame_data,
+                    val_loss_map,
+                    True,
+                    osp.join(outdir, "test"),
+                    0,
+                    val_name,
                 )
-
-                # 2. by scene
-                add_psnr_metric(
-                    scene_metrics,
-                    (scene,),
-                    shading_key,
-                    psnr_value,
-                )
-
-                # 3. by light
-                add_psnr_metric(
-                    light_metrics,
-                    (light,),
-                    shading_key,
-                    psnr_value,
-                )
-
-                # 4. by scene + light
-                add_psnr_metric(
-                    scene_light_metrics,
-                    (scene, light),
-                    shading_key,
-                    psnr_value,
-                )
-
-                # 5. per sample
-                sample_rows.append({
-                    "sample_idx": sample_idx,
-                    "sample_name": sample_name,
-                    "scene": scene,
-                    "light": light,
-                    "shading_key": shading_key,
-                    "psnr": psnr_value,
-                })
-
-            pbar.set_postfix(scene=scene, light=light)
-
-            # If you want to save images/exr, uncomment this block.
-            # if (not args.no_save) and test_saver is not None and outdir is not None:
-            #     test_saver.save(
-            #         val_frame_preds,
-            #         val_frame_data,
-            #         val_loss_map,
-            #         True,
-            #         osp.join(outdir, "test"),
-            #         0,
-            #         val_name,
-            #     )
 
     if (not args.no_save) and test_saver is not None and outdir is not None:
+        # Some Saver implementations buffer pages before writing final html/png pages.
         if hasattr(test_saver, "output_pages"):
             test_saver.output_pages(osp.join(outdir, "test"))
 
-    # Save CSV files
-    metric_dir = osp.join(outdir, "metrics")
-    os.makedirs(metric_dir, exist_ok=True)
-
-    write_metric_csv(
-        osp.join(metric_dir, "psnr_overall.csv"),
-        overall_metrics,
-        ["group"],
-    )
-
-    write_metric_csv(
-        osp.join(metric_dir, "psnr_by_scene.csv"),
-        scene_metrics,
-        ["scene"],
-    )
-
-    write_metric_csv(
-        osp.join(metric_dir, "psnr_by_light.csv"),
-        light_metrics,
-        ["light"],
-    )
-
-    write_metric_csv(
-        osp.join(metric_dir, "psnr_by_scene_light.csv"),
-        scene_light_metrics,
-        ["scene", "light"],
-    )
-
-    sample_csv_path = osp.join(metric_dir, "psnr_per_sample.csv")
-    with open(sample_csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "sample_idx",
-                "sample_name",
-                "scene",
-                "light",
-                "shading_key",
-                "psnr",
-            ],
-        )
-        writer.writeheader()
-        writer.writerows(sample_rows)
-
-    print("\n--- Test Results: Overall PSNR ---")
+    print("\n--- Test Results ---")
     results = {}
-
-    for group_key in sorted(overall_metrics.keys(), key=lambda x: str(x)):
-        for shading_key in sorted(overall_metrics[group_key].keys()):
-            psnr_sum, cnt = overall_metrics[group_key][shading_key]
-            if cnt <= 0:
-                continue
-            avg = psnr_sum / cnt
+    for psnr_key in sorted(metric_map.keys()):
+        if psnr_key.endswith("_cnt"):
+            continue
+        shading_key = psnr_key[:-5]
+        total = metric_map[shading_key + "_psnr"]
+        cnt = metric_map[shading_key + "_cnt"]
+        if cnt > 0:
+            avg = total / cnt
             results[shading_key] = avg
-            print(f" * {shading_key}: {avg:.4f} dB, count={cnt}")
+            print(f" * {shading_key}: {avg:.4f} dB")
 
-    print("\n--- Saved PSNR CSV files ---")
-    print(f" * {osp.join(metric_dir, 'psnr_overall.csv')}")
-    print(f" * {osp.join(metric_dir, 'psnr_by_scene.csv')}")
-    print(f" * {osp.join(metric_dir, 'psnr_by_light.csv')}")
-    print(f" * {osp.join(metric_dir, 'psnr_by_scene_light.csv')}")
-    print(f" * {osp.join(metric_dir, 'psnr_per_sample.csv')}")
+    return results
 
-    return {
-        "overall": overall_metrics,
-        "by_scene": scene_metrics,
-        "by_light": light_metrics,
-        "by_scene_light": scene_light_metrics,
-        "per_sample": sample_rows,
-    }
 
 # ============================================================
 # Main
@@ -701,6 +596,13 @@ def run_test(model, validation_loader, args, device, data_type, test_saver=None,
 
 if __name__ == "__main__":
     args = add_argument()
+
+    # dataset.py contains paths relative to src/, so make execution independent
+    # of the directory from which PowerShell launches this file.
+    args.config = osp.abspath(args.config)
+    args.ckpt_path = osp.abspath(args.ckpt_path) if args.ckpt_path else ""
+    args.output_dir = osp.abspath(args.output_dir) if args.output_dir else ""
+    os.chdir(SCRIPT_DIR)
 
     if not osp.exists(args.config):
         raise FileNotFoundError(f"Config file does not exist: {args.config}")
@@ -741,11 +643,12 @@ if __name__ == "__main__":
 
     loaded_path = load_checkpoint_into_model(model, ckpt_path, strict=args.strict)
     print(f"Checkpoint loaded from: {loaded_path}")
+    configure_plane_resolution(model, args.plane_resolution)
 
     model = model.to(device)
     model.eval()
 
-    DatasetCls = globals().get(configs["datasets_type"])
+    DatasetCls = getattr(dataset_module, configs["datasets_type"], None)
     if DatasetCls is None:
         raise KeyError(f"Dataset class '{configs['datasets_type']}' was not imported. Check dataset import.")
     validation_dataset = DatasetCls(configs["Dataset"], configs["validation_set"], True)

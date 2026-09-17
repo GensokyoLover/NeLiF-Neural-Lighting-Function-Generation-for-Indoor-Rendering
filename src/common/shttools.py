@@ -227,7 +227,16 @@ def check_data_valid(data):
                 is_fix = True
                 
     return not is_fix # 发生修复返回 False，完全健康返回 True
+def load_compressed_pickle(file_path):
+    dctx = zstd.ZstdDecompressor()
 
+    with open(file_path, "rb") as compressed_file:
+        with dctx.stream_reader(
+            compressed_file
+        ) as reader:
+            data = pickle.load(reader)
+
+    return data
 def load_dat(filename):
     try:
         with open(filename, 'rb') as f:

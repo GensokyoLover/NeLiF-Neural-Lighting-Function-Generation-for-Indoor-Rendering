@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from networks.partition_pyramid import PartitioningPyramid, NoSoftMaxPartitioningPyramid,TemporalPartitioningPyramid
+from networks.partition_pyramid import PartitioningPyramid, NoSoftMaxPartitioningPyramid,TemporalPartitioningPyramid,PartitioningPyramidNew
 from torchvision.models import vgg16
 from torchvision.transforms import Normalize
 import lpips
@@ -604,7 +604,7 @@ class NelifShadowNetwork(nn.Module):
                 ],group_num=8):
 
         super().__init__()
-        self.filter = PartitioningPyramid()
+        self.filter = PartitioningPyramidNew()
 
         self.weight_predictor = MidConvUNet(
             input_dim,
