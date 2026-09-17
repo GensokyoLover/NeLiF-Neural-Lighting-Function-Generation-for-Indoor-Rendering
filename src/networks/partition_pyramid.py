@@ -56,10 +56,37 @@ def upscale(img, kernel):
     return tl[:, :, 3:-1, 3:-1] + tr[:, :, 3:-1, 1:-3] + bl[:, :, 1:-3, 3:-1] + br[:, :, 1:-3, 1:-3]
 
 
-
-
-
 class PartitioningPyramid():
+    def __init__(self, K=5):
+        self.K = K
+        self.inputs = [25 + K + 1] + [41 for i in range(K - 1)]
+        self.upsample = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.final_activate = nn.LeakyReLU(0.3)
+        self.relu = nn.ReLU(inplace=False)
+    def __call__(self, weights, shadow):
+        part_weights = F.softmax(weights[0][:, 25:30], 1)
+        partitions = part_weights[:, :, None] * shadow[:, None]
+
+        denoised_levels = [
+            conv_splat(
+                F.avg_pool2d(partitions[:, i], 2 ** i, 2 ** i),
+                #self.relu(weights[i][:, 0:25]),
+                F.softmax(weights[i][:, 0:25], 1),
+                5
+            )
+            for i in range(self.K)
+        ]
+        denoised = denoised_levels[-1]
+        for i in reversed(range(self.K - 1)):
+            denoised = denoised_levels[i] + upscale(denoised, F.softmax(weights[i + 1][:, 25:41], 1) * 4)
+            #denoised = denoised_levels[i] + upscale(denoised, self.relu(weights[i + 1][:, 25:41]) * 4)
+        three_weight = weights[0][:, -1, ...].unsqueeze(dim=1)
+        denoised = denoised * self.final_activate(three_weight)
+        #denoised = denoised * (1 - self.final_activate(three_weight))
+        return denoised
+
+
+class PartitioningPyramidNew():
     def __init__(self, K=5):
         self.K = K
         self.inputs = [25 + K + 1] + [41 for i in range(K - 1)]
@@ -70,7 +97,9 @@ class PartitioningPyramid():
 
     def __call__(self, weights, shadow):
 
-
+        # --------------------------------------------------
+        # 1. 将原始 shadow 分配到不同 pyramid level
+        # --------------------------------------------------
         part_weights = F.softmax(
             weights[0][:, 25:25 + self.K],
             dim=1
@@ -79,7 +108,9 @@ class PartitioningPyramid():
         # [B, K, C, H, W]
         partitions = part_weights[:, :, None] * shadow[:, None]
 
-
+        # --------------------------------------------------
+        # 2. 先构建不同尺度的 raw shadow
+        #
         # level 0 : H
         # level 1 : H/2
         # level 2 : H/4
@@ -95,6 +126,9 @@ class PartitioningPyramid():
             for i in range(self.K)
         ]
 
+        # --------------------------------------------------
+        # 3. 从最低分辨率开始
+        #
         # Level 4:
         # raw shadow -> filter
         # --------------------------------------------------
@@ -127,6 +161,12 @@ class PartitioningPyramid():
         # --------------------------------------------------
         for i in reversed(range(self.K - 1)):
 
+            # ----------------------------------------------
+            # coarse -> fine upsampling
+            #
+            # weights[i+1] 位于 coarse level，
+            # 所以仍然使用它的 16-channel upsampling kernel
+            # ----------------------------------------------
             up_kernel = (
                 F.softmax(
                     weights[i + 1][:, 25:41],
@@ -139,8 +179,16 @@ class PartitioningPyramid():
                 denoised,
                 up_kernel
             )
+
+            # ----------------------------------------------
+            # 加入当前尺度自己的 shadow information
+            # ----------------------------------------------
             denoised = denoised + pyramid[i]
 
+            # ----------------------------------------------
+            # 关键修改：
+            # 每次 upsample + fusion 后重新 filter
+            # ----------------------------------------------
             filter_kernel = F.softmax(
                 weights[i][:, 0:25],
                 dim=1
