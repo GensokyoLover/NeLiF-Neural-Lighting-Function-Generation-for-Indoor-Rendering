@@ -19,7 +19,7 @@ TIMESTAMP = "{0:%Y-%m-%dT%H-%M-%S/}".format(datetime.now())
 SCRIPT_DIR = osp.dirname(osp.abspath(__file__))
 PROJECT_ROOT = osp.dirname(SCRIPT_DIR)
 DEFAULT_CONFIG = osp.join(PROJECT_ROOT, "configs", "nelif", "nelif.json")
-DEFAULT_CHECKPOINT = osp.join(PROJECT_ROOT, "ckpts_nelif", "nelif_decoder", "model.pt")
+DEFAULT_CHECKPOINT = osp.join(PROJECT_ROOT, "ckpts", "model.pt")
 DEFAULT_OUTPUT = osp.join(PROJECT_ROOT, "outputs", "nelif_test")
 
 
@@ -47,7 +47,6 @@ def add_argument():
 
     # Required / common
     parser.add_argument("--config", type=str, default=DEFAULT_CONFIG, help="Path to json config file")
-    parser.add_argument("--test_data", type=str, default="SigaLightMove", help="Validation/test dataset name")
     parser.add_argument("--ckpt_path", type=str, default=None, help="PyTorch/DeepSpeed checkpoint; defaults to the merged model.pt")
 
     # Old checkpoint style compatibility:
@@ -75,12 +74,9 @@ def add_argument():
     parser.add_argument("--cache", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument("--cut", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument("--read_light", default=True, action=argparse.BooleanOptionalAction)
-    parser.add_argument("--datasets_config", default="good_configs", type=str)
 
-    parser.add_argument("--plane_label", type=str, default="none", help="Optional GT plane dataset; inference generates its own planes")
     parser.add_argument("--plane_resolution", type=int, choices=[4, 16, 32, 64, 128], default=None,
                         help="Resize query and position embedding after loading; by default keep the checkpoint resolution")
-    parser.add_argument("--light", default="TogLightAll", type=str)
     parser.add_argument("--light_angular_resolution", default=8, type=int)
     parser.add_argument("--light_direction_resolution", default=128, type=int)
 
@@ -195,8 +191,9 @@ def generate_config_by_args(configs, args):
     configs["loss_configs"]["losses"] = {}
     test_config = make_test_saver_config()
 
-    configs["label"] = (args.label or "") + (args.test_data or "")
-    configs["validation_set"] = args.test_data
+    configs["label"] = (args.label or "") + "scene"
+    configs.pop("validation_set", None)
+    configs.pop("datasets_dir", None)
 
     # Keep old script's Dataset overrides.
     configs["Dataset"]["light_angular_resolution"] = args.light_angular_resolution
@@ -205,26 +202,20 @@ def generate_config_by_args(configs, args):
     configs["Dataset"]["diffuse"] = args.diffuse
     configs["Dataset"]["specular"] = args.specular
     configs["Dataset"]["shadow"] = args.shadow
-    configs["Dataset"]["light"] = args.light
-    configs["Dataset"]["plane_label"] = args.plane_label
+    configs["Dataset"].pop("light", None)
+    configs["Dataset"].pop("plane_label", None)
     configs["Dataset"]["voxel"] = args.voxel
     configs["Dataset"]["load_tri"] = args.tri
     configs["Dataset"]["cache"] = args.cache
     configs["Dataset"]["cut"] = args.cut
   
     configs["Dataset"]["read_light"] = args.read_light
-    configs["Dataset"]["datasets_config"] = args.datasets_config
+    configs["Dataset"].pop("datasets_config", None)
 
 
     configs["model_configs"]["light_angular_resolution"] = args.light_angular_resolution
     configs["model_configs"]["light_direction_resolution"] = args.light_direction_resolution
-    configs["model_configs"]["light_path"] = r"../datasets2/{}{}x{}/dir{}x{}.zst".format(
-        args.light,
-        args.light_angular_resolution,
-        args.light_direction_resolution,
-        args.light_angular_resolution,
-        args.light_direction_resolution,
-    )
+    configs["model_configs"].pop("light_path", None)
 
     if args.diffuse:
         add_loss_tem(configs, "log1p_diffuse_direct_shading", "L1", 1.0, False, False)
@@ -470,7 +461,7 @@ def build_old_style_ckpt_path(args, configs):
     if args.checkpoint is True:
         ck_folder = "{}{}_gpu{}_lr{}_accumulate{}".format(
             args.label or "",
-            args.test_data or "",
+            "scene",
             1,
             0.0003,
             1,
@@ -651,7 +642,7 @@ if __name__ == "__main__":
     DatasetCls = getattr(dataset_module, configs["datasets_type"], None)
     if DatasetCls is None:
         raise KeyError(f"Dataset class '{configs['datasets_type']}' was not imported. Check dataset import.")
-    validation_dataset = DatasetCls(configs["Dataset"], configs["validation_set"], True)
+    validation_dataset = DatasetCls(configs["Dataset"], isTest=True)
 
     loader_kwargs = dict(
         batch_size=1,

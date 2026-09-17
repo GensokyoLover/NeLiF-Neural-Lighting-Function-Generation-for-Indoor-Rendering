@@ -13,7 +13,7 @@ import zstandard as zstd
 import torch.nn.functional as F
 import numpy as np
 from utils.data_utils import safe_divide_np, to_cuda, to_cpu
-from common.shttools import *
+from common.shttools import load_pklzst
 import time
 
 import cv2
@@ -1006,10 +1006,15 @@ def get_filename_index_dict(directory_path):
     return file_dict
 
 class NelifDatasets(Dataset):
-    def __init__(self, configs, datasetsName, isTest = False):
+    """Load complete scene samples from the fixed datasets/scene directory."""
+
+    DATASETS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "datasets"))
+    SCENE_DIR = os.path.join(DATASETS_DIR, "scene")
+    LIGHT_DIR = os.path.join(DATASETS_DIR, "Light")
+
+    def __init__(self, configs, isTest=False):
         self.configs = configs
         self.isTest = isTest
-        resolution = str(configs["light_angular_resolution"]) + "x" + str(configs["light_direction_resolution"])
         self.read_indirect = configs["indirect"]
         self.load_tri = configs["load_tri"]
         self.isCut = configs["cut"]
@@ -1017,21 +1022,16 @@ class NelifDatasets(Dataset):
         if not self.isCut:
             self.channel_cnt = 1
         self.cache = False
-        self.datasetsName = datasetsName 
         self.read_voxel = configs["voxel"]
         self.dataDict = {}
         self.fileList = {}
-        self.videoLightPath = r"../datasets2/{}{}".format(configs["light"],resolution)
-        self.light_mid = configs["light"]
-        self.videoRootDir = r"../datasets2/" + self.datasetsName
-        with open("../datasets2/TogLightAll8x128/bias_info.json","r") as file:
-            self.light_bias = json.load(file)
-        file.close()
+        self.videoLightPath = self.LIGHT_DIR
+        self.videoRootDir = self.SCENE_DIR
+        self.init_datasets()
         print("start datasets init")
         self.volume_res = 128
-        datasets_name = configs["datasets_config"]
         self.dir = pyexr.read(
-                r"../datasets2/TogLightAll8x128/OutDir.exr"
+                os.path.join(self.DATASETS_DIR, "OutDir.exr")
             )[..., :3].reshape(
                 8,
                 128,
@@ -1045,27 +1045,15 @@ class NelifDatasets(Dataset):
                 3,
                 4,
             )
-        if os.path.exists(self.videoRootDir ) and os.path.exists(self.videoLightPath):
-            with open(f"../datasets2/{self.datasetsName}/{datasets_name}.json","r") as file:
-                self.videoFileList = json.load(file)
-            #substring = "L3D446S265B19ENDPAW4TTIUWIEAELUF3P3WU888"
-
-            #self.videoFileList = [s for s in self.videoFileList if substring in s]
-            #self.videoFileList = os.listdir(self.videoRootDir + "/voxelNew2/" )[:]
-            #self.videoFileList = self.videoFileList[:100]
-            with open("./light_max_scale.json","r") as file:
-                self.light_max_scale = json.load(file)
-            self.videoLightFileList = os.listdir(self.videoLightPath)
         with open(
             os.path.join(
-                self.videoLightPath,
+                self.DATASETS_DIR,
                 "bias_info.json",
             ),
             "r",
             encoding="utf-8",
         ) as file:
             self.light_bias = json.load(file)
-        self.init_datasets()
         self.dict_to_indices = {}
         for i in range(len(self.fileList)):
             self.dict_to_indices[self.fileList[i]] =  i
@@ -1076,22 +1064,20 @@ class NelifDatasets(Dataset):
 
         self.light_dir = pyexr.read(r"../datasets/indirect_dir.exr")
         self.read_light = configs["read_light"]
-        self.plane_path = r"../datasets_plane/" + configs["plane_label"] + "/"
-        self.read_plane = configs["plane_label"] != "none"
-        if self.read_plane:
-            # with open(self.plane_path + "/light_to_plane.json","r") as file:
-            #     self.lightToPlaneDict = json.load(file)
-            pass
         if self.read_light:
             print("read light yes")
 
 
     def init_datasets(self):
-        file_list = []
-        light_list = self.videoLightFileList
-        miss_cnt = 0
-        miss_light_cnt = 0
-        None
+        with os.scandir(self.videoRootDir) as entries:
+            self.videoFileList = sorted(
+                entry.name for entry in entries
+                if entry.is_file() and entry.name.endswith(".pkl.zst")
+            )
+        if not self.videoFileList:
+            raise FileNotFoundError(f"No scene .pkl.zst files found in {self.videoRootDir}")
+        self.fileList = self.videoFileList
+
     def update_loss(self, name, losses,weight):
         """
         indices: list/tensor，训练过程中得到的样本索引
@@ -1144,27 +1130,8 @@ class NelifDatasets(Dataset):
         lightData["max_scale"] = numpy.asarray(max_scale, dtype=radiance.dtype)
         lightData["radiance"] = radiance / lightData["max_scale"]
         lightData["direction"] = self.dir
-        if self.read_plane:
-            planeData = load_compressed_pickle(self.plane_path + str(lightID) + ".pkl.zst" )
-            # print(planeID)
-            # print(planeData.shape)
-            lightData["plane"] = planeData
         
-        #print("planeID",planeID)
-        data = {}
-        #data["volumeScope"] = volumeScope[np.newaxis, ...]
-        #print("scope complete")
-        directData_fn = self.videoRootDir + r'/direct/' + localID + ".pkl.zst"
-        direct_data = load_pklzst(directData_fn)
-        data.update(direct_data)
-        if self.read_indirect:
-            indirectData_fn = self.videoRootDir + r'/indirect/' + localID + ".pkl.zst"
-            indirect_data = load_pklzst(indirectData_fn)
-            data.update(indirect_data)
-        denoiseData_fn = self.videoRootDir + r'/denoise/' + localID + ".pkl.zst"
-        denoise_data = load_pklzst(denoiseData_fn)
-        for key in denoise_data:
-            data[key] = denoise_data[key]
+        data = load_pklzst(os.path.join(self.videoRootDir, self.videoFileList[idx]))
         if self.read_indirect:
             data["light_direction"] = self.light_dir[numpy.newaxis, ...]
       

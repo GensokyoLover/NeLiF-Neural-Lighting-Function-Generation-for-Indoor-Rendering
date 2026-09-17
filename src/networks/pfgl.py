@@ -823,6 +823,158 @@ class PlaneDecoder(nn.Module):
         return triplane_feature, compressed
 
 
+class TriplaneOutputLayer(nn.Module):
+    def __init__(self, in_channels, hidden_channels=128):
+        """
+        输入/输出：
+            [B, 3, C, H, W]
+            或 [B * 3, C, H, W]
+
+        每个平面使用独立卷积分支：
+            output = input + tail(head(input))
+
+        tail 零初始化，保证初始化时 output == input。
+        """
+        super().__init__()
+
+
+
+        self.plane_nets = nn.ModuleList([
+            self._make_plane_net(in_channels, hidden_channels)
+            for _ in range(3)
+        ])
+
+    @staticmethod
+    def _make_plane_net(in_channels, hidden_channels):
+        net = nn.Sequential(OrderedDict([
+            ("head", nn.Sequential(
+                nn.Conv2d(
+                    in_channels,
+                    hidden_channels,
+                    kernel_size=3,
+                    padding=1,
+                    padding_mode="replicate",
+                ),
+                nn.LeakyReLU(0.2, inplace=True),
+            )),
+            ("tail", nn.Conv2d(
+                hidden_channels,
+                in_channels,
+                kernel_size=3,
+                padding=1,
+                padding_mode="replicate",
+            )),
+        ]))
+
+        # 只将最后一层零初始化，head 保留默认初始化。
+        nn.init.zeros_(net.tail.weight)
+        nn.init.zeros_(net.tail.bias)
+
+        return net
+
+    def forward(self, x):
+        flattened_input = x.ndim == 4
+
+        if flattened_input:
+            if x.shape[0] % 3 != 0:
+                raise ValueError(
+                    "Flattened triplane input must have "
+                    "a batch dimension divisible by 3"
+                )
+            x = x.reshape(-1, 3, *x.shape[1:])
+        elif x.ndim != 5 or x.shape[1] != 3:
+            raise ValueError(
+                "Expected input shaped [B, 3, C, H, W] "
+                "or [B * 3, C, H, W]"
+            )
+
+        residual = torch.stack(
+            [
+                plane_net(x[:, plane_index])
+                for plane_index, plane_net in enumerate(self.plane_nets)
+            ],
+            dim=1,
+        )
+
+        output = x + residual
+
+        return output.flatten(0, 1) if flattened_input else output
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        """将旧共享分支的 head/tail 参数复制到三个独立分支。"""
+        legacy_names = (
+            "head.0.weight",
+            "head.0.bias",
+            "tail.weight",
+            "tail.bias",
+        )
+
+        for legacy_name in legacy_names:
+            legacy_key = prefix + legacy_name
+            legacy_value = state_dict.get(legacy_key)
+
+            if legacy_value is None:
+                continue
+
+            for plane_index in range(3):
+                new_key = (
+                    prefix
+                    + f"plane_nets.{plane_index}."
+                    + legacy_name
+                )
+                if new_key not in state_dict:
+                    state_dict[new_key] = legacy_value.clone()
+
+            state_dict.pop(legacy_key)
+
+        super()._load_from_state_dict(
+            state_dict, prefix, *args, **kwargs
+        )
+
+class HeavyUpsampler(nn.Module):
+    def __init__(self, in_channels, hidden_channels=128, upsample=True):
+        """
+        Args:
+            in_channels (int): 输入通道数 (C)
+            hidden_channels (int): 隐藏层通道数
+            upsample (bool): 是否进行上采样。
+                             True -> 输出尺寸为 4H x 4W
+                             False -> 输出尺寸为 H x W (原地卷积)
+        """
+        super(HeavyUpsampler, self).__init__()
+        self.enable_upsample = upsample
+        
+        # 1. 头部：特征映射到高维空间
+        self.head = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_channels, kernel_size=3, padding=1,padding_mode='replicate'),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+        self.body = nn.Sequential(
+            nn.Conv2d(hidden_channels, hidden_channels, kernel_size=3, padding=1,padding_mode='replicate'),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_channels, hidden_channels, kernel_size=3, padding=1,padding_mode='replicate'),
+            nn.ReLU(inplace=True)
+        )
+        self.tail = nn.Conv2d(hidden_channels, in_channels, kernel_size=3, padding=1,padding_mode='replicate')
+
+    def forward(self, x):
+        # x: [B, C, W, H]
+        
+        # 提取特征
+        x = self.head(x) 
+        
+        # 根据初始化时的选项决定路径
+        if self.enable_upsample:
+            x = self.up1(x) # [B, Hidden, 2W, 2H]
+            x = self.up2(x) # [B, Hidden, 4W, 4H]
+        else:
+            x = self.body(x) # [B, Hidden, W, H] 尺寸不变
+        
+        # 输出重构
+        x = self.tail(x) 
+        
+        return x
+    
 class NelifDecoder(nn.Module):
     def __init__(self, configs, loss_config,need_direct,need_indirect,need_shadow,need_encoder=False):
         super().__init__()
@@ -865,7 +1017,7 @@ class NelifDecoder(nn.Module):
         self.direct_compress_layer = nn.Linear(self.decoder_light_feature, 16)
         self.indirect_feature =64
         self.indirect_proxy = IndirectFarwardProxy(self.indirect_feature)
-
+        self.trioutputlayer = TriplaneOutputLayer(64,128)
         self.plane_pos_embedding = nn.Parameter(
             torch.zeros(
                 1,
@@ -1036,8 +1188,9 @@ class NelifDecoder(nn.Module):
         voxel_coord[...,:2] = voxel_coord[...,:2] * 2 - 1
         voxel_coord[...,2:3] = voxel_coord[...,2:3] /self.plane_res * 2 - 1
         voxel_coord = voxel_coord.repeat_interleave(3, dim=0)
-        sampled_plane = sampled_plane + self.plane_pos_embedding
 
+        sampled_plane = sampled_plane + self.plane_pos_embedding
+        sampled_plane= self.trioutputlayer(sampled_plane)
 
         light_feature,_,_,_,_,_,_  = sample_from_triplane_oct(sampled_plane,voxel_coord[...,[0,1,2]],mode='bilinear')
 
