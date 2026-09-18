@@ -366,6 +366,24 @@
     .code-block .line-comment { color: #556a5b; }
     .code-block .line-cmd { color: #7eb8c9; }
 
+
+    #usage p { margin: 1rem 0; }
+    #usage a { color: var(--accent2); overflow-wrap: anywhere; }
+    #usage p code, #usage td code {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      overflow-wrap: anywhere;
+    }
+    .usage-step { margin-top: 2.5rem; }
+    .usage-step h3 {
+      font-family: var(--font-serif);
+      font-size: 1.2rem;
+      font-weight: 400;
+      color: #fff;
+      margin-bottom: 1rem;
+    }
+    #usage .code-block + .code-block { margin-top: 1rem; }
+
     /* ── Citation ── */
     .citation-block {
       position: relative;
@@ -502,6 +520,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
         Code
       </a>
+      <a href="https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/tree/main" class="btn btn-secondary">Data &amp; Model</a>
     </div>
 
   </div>
@@ -671,22 +690,94 @@
 
 <!-- ════════════════════════ USAGE ════════════════════════ -->
 <section id="usage">
-  <div class="section-inner reveal">
-    <div class="sec-label">Code</div>
-    <h2 class="sec-title">Usage</h2>
-    <div class="code-block">
-      <pre><span class="line-comment"># 1. Clone the repository</span>
-<span class="line-cmd">git clone</span> https://github.com/&lt;your-username&gt;/NeLiF.git
-<span class="line-cmd">cd</span> NeLiF
+  <div class="section-inner">
+    <div class="sec-label">Code &amp; Data</div>
+    <h2 class="sec-title">Run NeLiF</h2>
 
-<span class="line-comment"># 2. Install dependencies</span>
-<span class="line-cmd">pip install</span> -r requirements.txt
+    <div class="usage-step reveal">
+      <h3>1. Clone and install</h3>
+      <p>Run these commands from a terminal with Conda available. The environment uses Python 3.10, PyTorch 2.6.0, and CUDA 12.6.</p>
+      <div class="code-block"><pre><code>git clone https://github.com/GensokyoLover/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering.git
+cd NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering
 
-<span class="line-comment"># 3. Download pretrained model / dataset (optional)</span>
-<span class="line-cmd">bash</span> scripts/download_data.sh
+conda env create -f environment.yml
+conda activate nelif</code></pre></div>
 
-<span class="line-comment"># 4. Run demo</span>
-<span class="line-cmd">python</span> demo.py --scene indoor_scene_01 --output results/</pre>
+    </div>
+
+    <div class="usage-step reveal">
+      <h3>2. Download the data and pretrained model</h3>
+      <p>Download the files below from <a href="https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/tree/main">Hugging Face</a>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Download</th><th>Size</th><th>Final location</th></tr></thead>
+          <tbody>
+            <tr><td><a href="https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/resolve/main/scene.tar.gz?download=true">scene.tar.gz</a></td><td>6.24 GB</td><td><code>datasets/scene/*.pkl.zst</code></td></tr>
+            <tr><td><a href="https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/resolve/main/light.zip?download=true">light.zip</a></td><td>76.6 MB</td><td><code>datasets/Light/*.pkl.zst</code></td></tr>
+            <tr><td><a href="https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/resolve/main/model.pt?download=true">model.pt</a></td><td>327.8 MB</td><td><code>ckpts/model.pt</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><code>datasets/OutDir.exr</code>, <code>datasets/indirect_dir.exr</code>, and <code>datasets/bias_info.json</code> are included in Git.</p>
+      <p>Download using the links above or the <a href="https://huggingface.co/docs/huggingface_hub/guides/cli">Hugging Face CLI</a>, then extract the archives:</p>
+      <div class="code-block"><pre><code>python -m pip install -U huggingface_hub
+hf download GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering scene.tar.gz light.zip --repo-type dataset --local-dir downloads
+hf download GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering model.pt --repo-type dataset --local-dir ckpts
+
+python -m tarfile -e downloads/scene.tar.gz downloads/scene_unpacked
+python -m zipfile -e downloads/light.zip downloads/light_unpacked</code></pre></div>
+      <p>Place the extracted <code>.pkl.zst</code> files directly in <code>datasets/scene/</code> and <code>datasets/Light/</code>, preserving their file names and the directory capitalization shown below.</p>
+
+    </div>
+
+    <div class="usage-step reveal">
+      <h3>3. Check the directory structure</h3>
+      <div class="code-block"><pre><code>NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/
+├── README.md
+├── configs/
+│   └── nelif/
+│       └── nelif.json                 # Model/evaluation configuration (Git)
+├── ckpts/
+│   └── model.pt                       # Download from Hugging Face
+├── datasets/
+│   ├── OutDir.exr                     # Included in Git
+│   ├── indirect_dir.exr               # Included in Git
+│   ├── bias_info.json                 # Included in Git
+│   ├── scene/
+│   │   └── &lt;scene_sample&gt;.pkl.zst      # Extract scene.tar.gz here
+│   └── Light/
+│       └── &lt;lightID&gt;.pkl.zst           # Extract light.zip here
+├── src/
+│   ├── nelif_run.py                   # Inference entry point
+│   ├── dataset.py
+│   ├── common/
+│   ├── networks/
+│   └── utils/
+├── docs/
+│   └── index.md                       # Paper project page
+└── outputs/                           # Created when running inference</code></pre></div>
+
+    </div>
+
+    <div class="usage-step reveal">
+      <h3>4. Run inference</h3>
+      <p>From the repository root, run:</p>
+      <div class="code-block"><pre><code>python src/nelif_run.py --device cuda --output_dir outputs/nelif_test</code></pre></div>
+      <p>The script uses <code>configs/nelif/nelif.json</code> and <code>ckpts/model.pt</code>, processes all scenes, saves their results, and reports PSNR.</p>
+
+    </div>
+
+    <div class="usage-step reveal">
+      <h3>5. View the saved results</h3>
+      <p>Each scene has its own output directory:</p>
+      <div class="code-block"><pre><code>outputs/nelif_test/test/data/00000_&lt;scene_sample&gt;/
+  pred_shading_&lt;N&gt;.exr       # Combined prediction
+  shading_&lt;N&gt;.exr            # Ground truth
+  pred_shadow_&lt;N&gt;.exr
+  pred_indirect_shading_&lt;N&gt;.exr
+  ...                       # Direct components, ground truth, and mask</code></pre></div>
+      <p><code>&lt;N&gt;</code> is the sample counter, starting at 1. Results are saved as HDR EXR images. Use <code>--no_save</code> to compute metrics without saving images.</p>
+      <p>See the <a href="https://github.com/GensokyoLover/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering#readme">README</a> for option details, or run <code>python src/nelif_run.py --help</code>.</p>
     </div>
   </div>
 </section>

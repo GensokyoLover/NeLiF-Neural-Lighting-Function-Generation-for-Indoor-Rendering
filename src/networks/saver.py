@@ -1,5 +1,3 @@
-import torch
-import torch.nn as nn
 import numpy as np
 import os.path as osp
 import imageio
@@ -25,8 +23,6 @@ class Saver():
             'N2L': lambda x, _: image_utils.normal2LDR(x),
             'S2L': lambda x, _: image_utils.float2uint8(x),
             'F2L': lambda x, _: image_utils.feature2uint8(x),
-            'colormap': lambda x, _: image_utils.colormap(x),
-            'raw_colormap': lambda x, _: image_utils.colormap(x, normalize=False),
             'rescale': lambda x, info: x * info['I_scale'],
             'diffuse_weight': lambda x, info: x * info['diffuse_weight'],
             'mask': lambda x, m : x * m,

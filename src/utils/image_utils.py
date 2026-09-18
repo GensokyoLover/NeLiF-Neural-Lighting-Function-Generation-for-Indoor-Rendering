@@ -1,5 +1,4 @@
 import numpy as np
-import cmapy
 
 def gamma(img):
     return img ** (1/2.2)
@@ -22,12 +21,6 @@ def feature2uint8(img):
         s = img[..., i].max() - img[..., i].min()
         img[..., i] = (img[..., i] - img[..., i].min()) / s
     return float2uint8(img, clip=False)
-
-def colormap(img, normalize=True):
-    if img.shape[-1] != 1:
-        print(img.shape)
-        raise ValueError
-    return cmapy.colorize((depth2uint8(img) if normalize else float2uint8(img)), 'viridis')
 
 def HDR2LDR(img, clip=True, clip_min=0., clip_max=None):
     if clip:
