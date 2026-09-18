@@ -82,17 +82,23 @@ NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/
 
 ## 5. Run inference
 
+Run from the repository root:
+
 ```bash
-python src/nelif_run.py --device cuda --output_dir outputs/nelif_test
+python src/nelif_run.py --config configs/nelif/nelif.json --ckpt_path ckpts/model.pt --label base --job_name base --light_angular_resolution 8 --light_direction_resolution 128 --diffuse --specular --shadow --indirect --device cuda --output_dir outputs/nelif_test
 ```
 
-The script uses `configs/nelif/nelif.json` and `ckpts/model.pt`, processes all scenes, saves their results, and reports PSNR.
+This runs all four rendering branches for every scene, saves their results, and reports PSNR.
 
 | Option | Meaning |
 | --- | --- |
 | `--output_dir PATH` | Result directory; defaults to `outputs/nelif_test` under the project root |
 | `--ckpt_path PATH` | Use a different checkpoint |
 | `--config PATH` | Use a different model/evaluation JSON configuration |
+| `--label base --job_name base` | Evaluation label and job name |
+| `--light_angular_resolution 8 --light_direction_resolution 128` | Light-field resolution |
+| `--diffuse --specular --shadow --indirect` | Enable all four rendering branches |
+| `--device cuda` | Run inference on the GPU |
 | `--no_save` | Compute metrics without saving images |
 
 Run `python src/nelif_run.py --help` for all options.

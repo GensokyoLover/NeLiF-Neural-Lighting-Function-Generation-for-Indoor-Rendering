@@ -762,8 +762,8 @@ python -m zipfile -e downloads/light.zip downloads/light_unpacked</code></pre></
     <div class="usage-step reveal">
       <h3>4. Run inference</h3>
       <p>From the repository root, run:</p>
-      <div class="code-block"><pre><code>python src/nelif_run.py --device cuda --output_dir outputs/nelif_test</code></pre></div>
-      <p>The script uses <code>configs/nelif/nelif.json</code> and <code>ckpts/model.pt</code>, processes all scenes, saves their results, and reports PSNR.</p>
+      <div class="code-block"><pre><code>python src/nelif_run.py --config configs/nelif/nelif.json --ckpt_path ckpts/model.pt --label base --job_name base --light_angular_resolution 8 --light_direction_resolution 128 --diffuse --specular --shadow --indirect --device cuda --output_dir outputs/nelif_test</code></pre></div>
+      <p>This runs all four rendering branches for every scene, saves their results, and reports PSNR.</p>
 
     </div>
 
