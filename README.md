@@ -27,7 +27,7 @@ conda activate nelif
 Download these files from [Hugging Face](https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/tree/main):
 
 | Download | Final local location |
-| --- | --- | --- |
+| --- | --- |
 | [scene.tar.gz](https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/resolve/main/scene.tar.gz?download=true) |  Extracted scene `.pkl.zst` files in `datasets/scene/` |
 | [light.zip](https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/resolve/main/light.zip?download=true) | Extracted light `.pkl.zst` files in `datasets/Light/` |
 | [model.pt](https://huggingface.co/datasets/GensokyoLOvEr/NeLiF-Neural-Lighting-Function-Generation-for-Indoor-Rendering/resolve/main/model.pt?download=true) |  `ckpts/model.pt` |
