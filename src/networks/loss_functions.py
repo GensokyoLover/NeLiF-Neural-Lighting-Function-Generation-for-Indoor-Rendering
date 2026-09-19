@@ -5,9 +5,6 @@ from abc import abstractmethod
 import torch
 import torch.nn as nn
 
-from . import pytorch_ssim
-
-
 class LossFunction():
     @abstractmethod
     def forward(self, pred, gt, **kwards):
@@ -54,18 +51,12 @@ class L1Loss(LossFunction):
         return torch.abs(pred-gt)
 
 
-class SSIMLoss(LossFunction):
-    def forward(self, pred, gt):
-        return 1.0 - pytorch_ssim.ssim(pred, gt) # It seems like ssim already means along the dimensions of rgb images
-
-
 class Loss(torch.nn.Module):
     def __init__(self, configs):
         super().__init__()
         self.loss_functions = {
             'L1': L1Loss(),
             'L2':  nn.MSELoss(),
-            'SSIM': SSIMLoss(),
         }
 
         self.configs = configs
@@ -100,11 +91,6 @@ class Loss(torch.nn.Module):
                 loss = loss_func(pred, gt, mask=mask.bool())
             else:
                 loss = loss_func(pred, gt)
-
-            if cfg['reweigh']:
-                liangdu = data["log1p_diffuse_direct_shading"].permute(0,3,1,2)
-                liangdu = liangdu + data["log1p_specular_direct_shading"].permute(0,3,1,2)
-                loss *= liangdu * 0.3
 
             if "special_weight" in cfg.keys():
                 pixel_wise_weight = data["log1p_direct_shading"]

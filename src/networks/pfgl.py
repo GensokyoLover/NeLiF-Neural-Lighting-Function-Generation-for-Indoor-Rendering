@@ -1087,7 +1087,6 @@ class NelifDecoder(nn.Module):
 
 
         lightData = data["global"]
-        print(lightData.keys())
         B = lightData["radiance"].shape[0]
 
         radiance = lightData["radiance"].permute(
@@ -1218,13 +1217,10 @@ class NelifDecoder(nn.Module):
             invoxel_coord[...,2:3] = invoxel_coord[...,2:3] /self.plane_res * 2 - 1
             invoxel_coord = invoxel_coord.repeat_interleave(3,0)
             indirect_feature,_,_,_,_,_,_ = sample_from_triplane_oct(sampled_plane,invoxel_coord[...,[0,1,2]],mode='bilinear')
-            print("indirect_feature",indirect_feature.shape)
 
             lp = indirect_data["light_position"]
             sp = data["local"]["gbuffer"]["lposition"]
 
-            print("light albedo shape",indirect_data["light_albedo"].shape)
-            print(" indirect_feature shape",indirect_feature.shape)
             light_albedo = (
                 indirect_data["light_albedo"]
                 .permute(0, 3, 1, 2)      # [B,3,H,W]

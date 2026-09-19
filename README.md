@@ -120,3 +120,63 @@ outputs/nelif_test/test/data/00000_<scene_sample>/
 ```
 
 `<N>` is the sample counter, starting at 1. Results are saved as HDR EXR images.
+
+## 7. Train or fine-tune
+
+`nelif_train.py` reuses the inference entry point's model, preprocessing, branch flags,
+and L1 losses. It enables training mode and performs `zero_grad`, `backward`, and an
+Adam optimizer update for each sample. No additional Python packages are required.
+
+Run from the repository root to fine-tune the released checkpoint:
+
+```bash
+python src/nelif_train.py --ckpt_path ckpts/model.pt --epochs 10 --lr 0.0003 --device cuda --output_dir outputs/nelif_train
+```
+
+All four rendering branches are enabled by default. Training uses shuffled samples
+from `datasets/scene/` and the matching lights in `datasets/Light/`, with batch size 1.
+This is the same dataset used by inference; no separate validation split is created.
+
+| Option | Meaning |
+| --- | --- |
+| `--epochs N` | Number of training epochs; default 1 |
+| `--lr RATE` | Adam learning rate; default 0.0003 |
+| `--weight_decay VALUE` | Adam weight decay; default 0 |
+| `--grad_clip VALUE` | Maximum gradient norm; default 0 disables clipping |
+| `--max_steps N` | Stop after N optimizer updates in total; default 0 has no step limit |
+| `--from_scratch` | Use random weights instead of loading `ckpts/model.pt` |
+| `--plane_resolution N` | Resize the learned planes before creating the optimizer |
+| `--no-diffuse`, `--no-specular`, `--no-shadow`, `--no-indirect` | Disable individual branches; keep at least one enabled |
+
+Each epoch (or the final partial epoch when `--max_steps` is reached) saves
+`latest.pt` and `train_history.json` under `--output_dir`. The checkpoint includes
+model weights, Adam state, configuration, epoch, and step count. `--ckpt_path`
+initializes model weights only; it does not resume optimizer state or epoch counters.
+Use a new output directory for each run to preserve previous training results.
+Every epoch prints the mean total loss, each component loss, and mean PSNR for
+each available shading component (including combined `shading` when all branches
+are enabled). PSNR uses the same LDR conversion and calculation as `nelif_run.py`.
+These are averages of the training forward passes before their optimizer updates,
+not a separate validation pass using the final epoch weights. Non-finite PSNR
+samples are excluded, as in inference, and valid sample counts are reported;
+if none are valid, the metric is printed as N/A and saved as JSON null.
+`train_history.json` records `losses`, `psnr`, and `psnr_counts` for each epoch.
+Image export remains in `nelif_run.py`.
+
+Train from random initialization for 1000 epochs:
+
+```bash
+python src/nelif_train.py --from_scratch --epochs 1000 --lr 0.0003 --device cuda --output_dir outputs/nelif_train_scratch_1000
+```
+
+Test a single training step:
+
+```bash
+python src/nelif_train.py --max_steps 1 --device cuda --output_dir outputs/nelif_train_check
+```
+
+Run inference with the trained weights:
+
+```bash
+python src/nelif_run.py --ckpt_path outputs/nelif_train/latest.pt --device cuda --output_dir outputs/nelif_trained_test
+```
