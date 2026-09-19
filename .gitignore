@@ -22,5 +22,6 @@ __pycache__/
 
 test*.py
 !test.py
+!/tests/test_nelif*.py
 /src/gen_room
 /src/ext/Optix

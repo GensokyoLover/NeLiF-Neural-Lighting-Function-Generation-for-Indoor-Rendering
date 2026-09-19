@@ -40,7 +40,7 @@ def str2checkpoint(v):
     return v
 
 
-def add_argument():
+def build_argument_parser(training=False):
     parser = argparse.ArgumentParser(
         description="Windows/single-GPU PyTorch test-only version of train_plane_video.py."
     )
@@ -59,8 +59,9 @@ def add_argument():
     parser.add_argument("--label", default="", type=str)
     parser.add_argument("--job_name", type=str, default="test")
     parser.add_argument("--save_path", type=str, default="..")
-    parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT, help="Directory for test outputs")
-    parser.add_argument("--no_save", default=False, action="store_true", help="Only compute metrics, do not save images/exr")
+    parser.add_argument("--output_dir", type=str, default=DEFAULT_OUTPUT, help="Directory for outputs")
+    if not training:
+        parser.add_argument("--no_save", default=False, action="store_true", help="Only compute metrics, do not save images/exr")
 
     # Task flags, keep same as old script
     parser.add_argument("--diffuse", default=True, action=argparse.BooleanOptionalAction)
@@ -89,7 +90,10 @@ def add_argument():
     parser.add_argument("--strict", default=True, action=argparse.BooleanOptionalAction,
                         help="Require all current model parameters; known removed legacy modules are reported and excluded")
 
-    args = parser.parse_args()
+    return parser
+
+
+def validate_arguments(parser, args):
     args.checkpoint = str2checkpoint(args.checkpoint)
     if args.voxel or args.indirect_direct:
         parser.error("NelifDecoder supports diffuse/specular/shadow/indirect; --voxel and --indirect_direct are not supported")
@@ -102,6 +106,11 @@ def add_argument():
     if args.ckpt_path is None and args.checkpoint is False:
         args.ckpt_path = DEFAULT_CHECKPOINT
     return args
+
+
+def add_argument(argv=None):
+    parser = build_argument_parser()
+    return validate_arguments(parser, parser.parse_args(argv))
 
 
 # ============================================================
@@ -154,14 +163,13 @@ def ensure_config_fields(config):
     return config
 
 
-def add_loss_tem(config, name, loss, weight, reweigh=False, relative=False):
+def add_loss_tem(config, name, loss, weight, relative=False):
     config["loss_configs"]["losses"][name] = {
         "pname": name,
         "gname": name,
         "weight": weight,
         "mask": None,
         "loss": loss,
-        "reweigh": reweigh,
         "visualize": True,
         "relative": relative,
     }
@@ -218,7 +226,7 @@ def generate_config_by_args(configs, args):
     configs["model_configs"].pop("light_path", None)
 
     if args.diffuse:
-        add_loss_tem(configs, "log1p_diffuse_direct_shading", "L1", 1.0, False, False)
+        add_loss_tem(configs, "log1p_diffuse_direct_shading", "L1", 1.0)
         for k in [
             "log1p_diffuse_direct_shading",
             "pred_log1p_diffuse_direct_shading",
@@ -230,7 +238,7 @@ def generate_config_by_args(configs, args):
             add_save_tem(test_config, k)
 
     if args.specular:
-        add_loss_tem(configs, "log1p_specular_direct_shading", "L1", 1.0, False, False)
+        add_loss_tem(configs, "log1p_specular_direct_shading", "L1", 1.0)
         for k in [
             "log1p_specular_direct_shading",
             "specular_direct_shading",
@@ -242,15 +250,15 @@ def generate_config_by_args(configs, args):
             add_save_tem(test_config, k)
 
     if args.shadow:
-        add_loss_tem(configs, "shadow", "L1", 1.0, True, False)
+        add_loss_tem(configs, "shadow", "L1", 1.0)
         for k in ["shadow", "pred_shadow", "direct_shadow_shading", "pred_direct_shadow_shading"]:
             add_save_tem(configs, k)
         for k in ["pred_shadow", "shadow"]:
             add_save_tem(test_config, k)
 
     if args.indirect:
-        add_loss_tem(configs, "log1p_diffuse_indirect_shading", "L1", 1.0, False, False)
-        add_loss_tem(configs, "log1p_specular_indirect_shading", "L1", 1.0, False, False)
+        add_loss_tem(configs, "log1p_diffuse_indirect_shading", "L1", 1.0)
+        add_loss_tem(configs, "log1p_specular_indirect_shading", "L1", 1.0)
         for k in [
             "diffuse_indirect_shading",
             "log1p_diffuse_indirect_shading",
